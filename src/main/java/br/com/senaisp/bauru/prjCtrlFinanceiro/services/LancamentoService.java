@@ -2,6 +2,7 @@ package br.com.senaisp.bauru.prjCtrlFinanceiro.services;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,45 +63,64 @@ public class LancamentoService {
             .map(this::converter).toList();
     }
     
+    // ITEM A: Busca direto por id + usuarioId e lança RecursoNaoEncontradoException (404)
     @Transactional(readOnly = true)
     public LancamentoResponse buscarPorIdAndUsuarioId(Long id, Long usuarioId) {
-    	if (!usuarios.existsById(usuarioId))
+        if (!usuarios.existsById(usuarioId))
             throw new RecursoNaoEncontradoException("Usuário não encontrado");
-    	if (!lancamentos.existsById(id))
-            throw new RecursoNaoEncontradoException("Lançamento não encontrado");
-    	return lancamentos.findByIdAndUsuarioId(id, usuarioId).stream()
-    			.map(this::converter).toList().getFirst();
+            
+        Lancamento l = lancamentos.findByIdAndUsuarioId(id, usuarioId)
+            .orElseThrow(() -> new RecursoNaoEncontradoException("Lançamento não encontrado"));
+            
+        return converter(l);
     }
     
+    // ITEM B: Protegido por usuarioId do token + validações de categoria e valor mantidas
     @Transactional
     public LancamentoResponse alterar(Long usuarioId, Long id, LancamentoRequest dados) {
         usuarios.findById(usuarioId)
             .orElseThrow(() -> new RecursoNaoEncontradoException("Usuário não encontrado"));
         Lancamento l = lancamentos.findByIdAndUsuarioId(id, usuarioId)
-        	.orElseThrow(() -> new RecursoNaoEncontradoException("Lançamento não encontrado"));
-        Categoria categoria = null;
-        if (dados.categoriaId()!=null) {
-        	categoria = categorias.findById(dados.categoriaId())
-            .orElseThrow(() -> new RecursoNaoEncontradoException("Categoria não encontrada"));
-        	if (!Boolean.TRUE.equals(categoria.getAtiva())) {
-        		throw new IllegalArgumentException("Categoria inativa!");
-        	}
-        	l.setCategoria(categoria);
+            .orElseThrow(() -> new RecursoNaoEncontradoException("Lançamento não encontrado"));
+            
+        if (dados.categoriaId() != null) {
+            Categoria categoria = categorias.findById(dados.categoriaId())
+                .orElseThrow(() -> new RecursoNaoEncontradoException("Categoria não encontrada"));
+            if (!Boolean.TRUE.equals(categoria.getAtiva())) {
+                throw new IllegalArgumentException("Categoria inativa!");
+            }
+            l.setCategoria(categoria);
         }
-        if (dados.descricao()!=null) l.setDescricao(dados.descricao().trim());
-        if (dados.valor()!=null) l.setValor(dados.valor());
-        if (dados.dataLancamento()!=null) l.setDataLancamento(dados.dataLancamento());
-        if (dados.observacao()!=null) l.setObservacao(dados.observacao());
+        if (dados.descricao() != null) {
+            if (dados.descricao().isBlank()) {
+                throw new IllegalArgumentException("Descrição inválida!");
+            }
+            l.setDescricao(dados.descricao().trim());
+        }
+        if (dados.valor() != null) {
+            if (dados.valor().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Valor deve ser maior que zero!");
+            }
+            l.setValor(dados.valor());
+        }
+        if (dados.dataLancamento() != null) l.setDataLancamento(dados.dataLancamento());
+        if (dados.observacao() != null) l.setObservacao(dados.observacao());
+        
         return converter(lancamentos.save(l));
     }
     
+    // ITEM E: Busca primeiro com findByIdAndUsuarioId antes de deletar
     @Transactional
     public boolean excluir(Long usuarioId, Long id) {
-    		if (!usuarios.existsById(usuarioId))
-    			return false;
-    		if (!lancamentos.existsById(id)) 
+        if (!usuarios.existsById(usuarioId))
             return false;
-        lancamentos.deleteById(id);
+            
+        Optional<Lancamento> lancamento = lancamentos.findByIdAndUsuarioId(id, usuarioId);
+        if (lancamento.isEmpty()) {
+            return false;
+        }
+        
+        lancamentos.delete(lancamento.get());
         return true;
     }
     
